@@ -100,6 +100,146 @@ final class RegistroService
     }
 
     /**
+     * Devuelve un PDF para descarga sin revelar si el solicitante es público o
+     * interno. `pdf.php` debe autorizar la sesión antes de llamarlo.
+     *
+     * @return array{bytes:string, filename:string, codigo:string}
+     */
+    public function pdfById(int $id): array
+    {
+        $registro = $this->findById($id);
+        $codigo = $this->codigo($registro);
+        $bytes = $this->generatePdf($registro);
+
+        return [
+            'bytes' => $bytes,
+            'filename' => 'Comprobante-' . $codigo . '.pdf',
+            'codigo' => $codigo,
+        ];
+    }
+
+    /**
+     * Lista registros para personal interno autorizado.
+     *
+     * @return array{items:array<int,array<string,mixed>>,pagination:array<string,int>}
+     */
+    public function internalRecords(string $query, int $page, int $perPage): array
+    {
+        $query = trim($query);
+        $page = max(1, $page);
+        $perPage = max(1, min(25, $perPage));
+
+        $where = '';
+        $params = [];
+        if ($query !== '') {
+            $where = ' WHERE (
+                LOCATE(LOWER(:q), LOWER(marca_dron)) > 0
+                OR LOCATE(LOWER(:q), LOWER(modelo)) > 0
+                OR LOCATE(LOWER(:q), LOWER(numero_serie)) > 0
+                OR LOCATE(LOWER(:q), LOWER(nombre_propietario)) > 0
+                OR LOCATE(LOWER(:q), LOWER(correo_contacto)) > 0
+            )';
+            $params['q'] = $query;
+        }
+
+        $countStmt = $this->pdo->prepare('SELECT COUNT(*) FROM ' . self::TABLE . $where);
+        $countStmt->execute($params);
+        $total = (int) $countStmt->fetchColumn();
+
+        $offset = ($page - 1) * $perPage;
+        $sql = 'SELECT id, marca_dron, modelo, numero_serie, nombre_propietario,
+                       correo_contacto, fecha_registro, estado_registro, intentos_envio
+                FROM ' . self::TABLE . $where . '
+                ORDER BY fecha_registro DESC, id DESC
+                LIMIT ' . $perPage . ' OFFSET ' . $offset;
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $items = array_map(fn (array $row): array => $this->toInternalRecord($row), $rows);
+
+        return [
+            'items' => $items,
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'total_pages' => $total === 0 ? 0 : (int) ceil($total / $perPage),
+            ],
+        ];
+    }
+
+    /**
+     * Consulta pública limitada por número de serie y correo del titular.
+     * No revela datos personales ni capacidades de descarga.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function publicSearch(string $numeroSerie, string $correo): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, marca_dron, modelo, numero_serie, fecha_registro, estado_registro
+             FROM ' . self::TABLE . '
+             WHERE numero_serie = :serie AND LOWER(correo_contacto) = LOWER(:correo)
+             LIMIT 1'
+        );
+        $stmt->execute([
+            'serie' => $numeroSerie,
+            'correo' => mb_strtolower($correo, 'UTF-8'),
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $this->toPublicSearchResult($row) : null;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    public function codigoForRow(array $row): string
+    {
+        return $this->codigo($row);
+    }
+
+    /**
+     * Busca el registro público asociado a un token y, si el solicitante tiene
+     * permiso de descarga, incluye la información operativa necesaria.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function toInternalRecord(array $row): array
+    {
+        return [
+            'id' => (int) $row['id'],
+            'codigo' => $this->codigo($row),
+            'marca_dron' => (string) $row['marca_dron'],
+            'modelo' => (string) $row['modelo'],
+            'numero_serie' => (string) $row['numero_serie'],
+            'nombre_propietario' => (string) $row['nombre_propietario'],
+            'correo_contacto' => (string) $row['correo_contacto'],
+            'fecha_registro' => (string) $row['fecha_registro'],
+            'estado_registro' => (string) $row['estado_registro'],
+            'intentos_envio' => (int) ($row['intentos_envio'] ?? 0),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function toPublicSearchResult(array $row): array
+    {
+        return [
+            'codigo' => $this->codigo($row),
+            'marca_dron' => (string) $row['marca_dron'],
+            'modelo' => (string) $row['modelo'],
+            'numero_serie' => (string) $row['numero_serie'],
+            'fecha_registro' => (string) $row['fecha_registro'],
+            'estado_registro' => (string) $row['estado_registro'],
+        ];
+    }
+
+    /**
      * Reintenta el envío del comprobante. No vuelve a crear el registro.
      *
      * @return array<string, mixed>
@@ -315,8 +455,9 @@ final class RegistroService
         $estado = (string) $row['estado_registro'];
         $intentos = (int) $row['intentos_envio'];
         $token = (string) $row['pdf_token'];
+        $mayDescargar = Auth::canCurrentUserDownload();
 
-        return [
+        $public = [
             'id' => (int) $row['id'],
             'codigo' => $this->codigo($row),
             'marca_dron' => (string) $row['marca_dron'],
@@ -329,9 +470,15 @@ final class RegistroService
             'correo_enviado' => $estado === 'CORREO_ENVIADO',
             'intentos_envio' => $intentos,
             'reintento_disponible' => $estado !== 'CORREO_ENVIADO' && $intentos < $this->maxRetries,
+            'puede_descargar' => $mayDescargar,
             'token_comprobante' => $token,
-            'pdf_url' => app_url() . '/api/pdf.php?token=' . rawurlencode($token),
         ];
+
+        if ($mayDescargar) {
+            $public['pdf_url'] = 'api/pdf.php?id=' . rawurlencode((string) $row['id']);
+        }
+
+        return $public;
     }
 
     private function isDuplicateKey(PDOException $e): bool

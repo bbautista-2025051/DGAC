@@ -13,6 +13,37 @@ namespace Dgac\Drones;
 final class Validator
 {
     /**
+     * Normaliza un número de serie con las mismas reglas del registro.
+     */
+    public static function normalizeSerie(mixed $value): string
+    {
+        $serie = preg_replace('/\s+/u', '', self::text($value)) ?? '';
+
+        return mb_strtoupper($serie, 'UTF-8');
+    }
+
+    /**
+     * Normaliza un correo electrónico con las mismas reglas del registro.
+     */
+    public static function normalizeCorreo(mixed $value): string
+    {
+        return mb_strtolower(self::text($value), 'UTF-8');
+    }
+
+    public static function isValidSerie(string $serie): bool
+    {
+        return preg_match('/^[A-Z0-9][A-Z0-9._-]{5,39}$/', $serie) === 1;
+    }
+
+    public static function isValidCorreo(string $correo): bool
+    {
+        return $correo !== '' &&
+            mb_strlen($correo) <= 190 &&
+            filter_var($correo, FILTER_VALIDATE_EMAIL) !== false &&
+            preg_match('/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/u', $correo) === 1;
+    }
+
+    /**
      * @param array<string, mixed> $input
      * @return array{datos: array<string, string>, errores: array<string, string>}
      */

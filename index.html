@@ -30,6 +30,10 @@
         <a href="https://dgac.gob.gt" target="_blank" rel="noopener noreferrer">Portal DGAC</a>
         <a href="https://dgac.gob.gt/page/drones" target="_blank" rel="noopener noreferrer" aria-current="page">Drones</a>
         <a href="https://dgac.gob.gt/page/contacto" target="_blank" rel="noopener noreferrer">Contacto</a>
+        <button type="button" class="login-button" id="btn-login" aria-haspopup="dialog" aria-expanded="false" aria-controls="login-modal">
+          <img src="assets/icons/user.svg" alt="" width="18" height="18">
+          <span id="login-label">Iniciar sesión</span>
+        </button>
       </nav>
     </div>
   </header>
@@ -82,6 +86,142 @@
             <span aria-hidden="true">◷</span> Tiempo estimado: 2 minutos
           </p>
         </aside>
+      </div>
+    </section>
+
+    <section class="consult-section" id="consultar" aria-labelledby="consultar-title">
+      <div class="container">
+        <div class="consult-shell">
+          <div class="consult-card">
+            <div class="consult-copy">
+              <p class="panel__kicker">Consulta del trámite</p>
+              <h2 id="consultar-title">Buscar tu dron</h2>
+              <p>Ingrese el número de serie y el correo que utilizó en el registro. El sistema le mostrará únicamente la información básica necesaria para identificarlo.</p>
+              <ul class="consult-notes" aria-label="Alcance de la consulta">
+                <li>La búsqueda es pública, pero requiere los dos datos.</li>
+                <li>No muestra nombre, correo ni otros datos personales.</li>
+                <li>El comprobante PDF solo pueden descargarlo usuarios internos autorizados.</li>
+              </ul>
+              <div class="session-panel" id="session-panel" hidden>
+                <div>
+                  <p class="session-panel__kicker">Sesión institucional</p>
+                  <p class="session-panel__user"><strong id="session-user-name">—</strong></p>
+                  <p class="session-panel__meta"><span id="session-user-role">—</span> · <span id="session-user-email">—</span></p>
+              </div>
+            </div>
+
+            <form id="buscar-form" class="consult-form" novalidate>
+              <div class="field">
+                <label for="buscar_serie">Número de serie <span class="required" aria-hidden="true">*</span></label>
+                <input
+                  type="text"
+                  id="buscar_serie"
+                  name="numero_serie"
+                  maxlength="40"
+                  autocomplete="off"
+                  autocapitalize="characters"
+                  spellcheck="false"
+                  placeholder="Ej. 1ZNBJ7CP0A2B3C"
+                  required
+                  aria-describedby="buscar_serie-help buscar_serie-error"
+                >
+                <p class="hint" id="buscar_serie-help">Entre 6 y 40 caracteres.</p>
+                <p class="field__error" id="buscar_serie-error" role="alert"></p>
+              </div>
+
+              <div class="field">
+                <label for="buscar_correo">Correo de contacto <span class="required" aria-hidden="true">*</span></label>
+                <input
+                  type="email"
+                  id="buscar_correo"
+                  name="correo_contacto"
+                  maxlength="190"
+                  autocomplete="email"
+                  inputmode="email"
+                  placeholder="Ej. nombre@dominio.com"
+                  required
+                  aria-describedby="buscar_correo-help buscar_correo-error"
+                >
+                <p class="hint" id="buscar_correo-help">Debe coincidir con el correo indicado en el registro.</p>
+                <p class="field__error" id="buscar_correo-error" role="alert"></p>
+              </div>
+
+              <button type="submit" class="btn btn--primary" id="btn-buscar">
+                <span class="btn__spinner" aria-hidden="true"></span>
+                <span class="btn__label">Buscar mi dron</span>
+              </button>
+
+              <div class="search-result" id="search-result" hidden aria-live="polite">
+                <div class="search-result__head">
+                  <img src="assets/icons/check.svg" alt="" width="22" height="22">
+                  <div>
+                    <p class="panel__kicker">Registro encontrado</p>
+                    <h3>Ficha básica del dron</h3>
+                  </div>
+                </div>
+                <dl class="search-result__list">
+                  <div><dt>Código</dt><dd id="search-codigo">—</dd></div>
+                  <div><dt>Dron</dt><dd id="search-dron">—</dd></div>
+                  <div><dt>Número de serie</dt><dd id="search-serie">—</dd></div>
+                  <div><dt>Fecha de registro</dt><dd id="search-fecha">—</dd></div>
+                  <div><dt>Estado</dt><dd><span class="status" id="search-estado">—</span></dd></div>
+                </dl>
+                <p class="search-result__note">El PDF se envía al correo de contacto. Si necesita descargarlo, inicie sesión con un usuario interno autorizado.</p>
+              </div>
+
+              <div class="alert alert--error consult-alert" id="search-alert" role="alert" hidden>
+                <img src="assets/icons/alert.svg" alt="" width="22" height="22">
+                <div>
+                  <strong>No se encontró información</strong>
+                  <p id="search-alert-text"></p>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <div class="records-card" id="records-card" hidden aria-labelledby="records-title">
+            <div class="records-card__head">
+              <div>
+                <p class="panel__kicker">Acceso interno</p>
+                <h3 id="records-title">Drones registrados</h3>
+              </div>
+              <p class="records-count"><span id="records-total">0</span> registro(s)</p>
+            </div>
+            <p class="records-permission" id="records-permission"></p>
+            <form class="records-toolbar" id="records-toolbar" role="search">
+              <label class="sr-only" for="records_q">Buscar en el listado interno</label>
+              <input type="search" id="records_q" name="q" placeholder="Buscar por serie, marca, modelo, propietario o correo…" maxlength="120" autocomplete="off">
+              <button type="submit" class="btn btn--outline btn--small">Buscar</button>
+              <button type="button" class="btn btn--ghost btn--small" id="records-reset">Limpiar</button>
+            </form>
+            <div class="records-table-wrap" id="records-table-wrap">
+              <table class="records-table" id="records-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Código</th>
+                    <th scope="col">Dron</th>
+                    <th scope="col">Serie</th>
+                    <th scope="col">Propietario</th>
+                    <th scope="col">Correo</th>
+                    <th scope="col">Fecha</th>
+                    <th scope="col">Estado</th>
+                    <th scope="col">Descarga</th>
+                  </tr>
+                </thead>
+                <tbody id="records-body"></tbody>
+              </table>
+            </div>
+            <div class="records-empty" id="records-empty" hidden>
+              <img src="assets/icons/alert.svg" alt="" width="22" height="22">
+              <div><strong>Sin resultados</strong><p>No hay registros que coincidan con la búsqueda.</p></div>
+            </div>
+            <div class="records-pagination" aria-label="Paginación del listado">
+              <button type="button" class="btn btn--ghost btn--small" id="records-prev">Anterior</button>
+              <p>Página <strong id="records-page">1</strong> de <strong id="records-pages">1</strong></p>
+              <button type="button" class="btn btn--ghost btn--small" id="records-next">Siguiente</button>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -291,7 +431,7 @@
             </div>
 
             <div class="actions">
-              <a class="btn btn--primary" id="btn-pdf" href="#" download>
+              <a class="btn btn--primary" id="btn-pdf" href="#" download hidden>
                 <img src="assets/icons/pdf.svg" alt="" width="20" height="20">
                 Descargar comprobante PDF
               </a>
@@ -413,6 +553,69 @@
       </div>
     </div>
   </footer>
+
+  <div class="modal-backdrop" id="login-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="login-title" aria-describedby="login-note">
+      <div class="modal__head">
+        <div>
+          <p class="panel__kicker">Acceso institucional</p>
+          <h2 id="login-title">Iniciar sesión</h2>
+        </div>
+        <button type="button" class="modal__close" id="btn-close-login" aria-label="Cerrar ventana de inicio de sesión">
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+
+      <p class="modal__note" id="login-note">Acceso exclusivo para usuarios internos autorizados. El público general no necesita cuenta para registrar ni buscar con número de serie y correo.</p>
+
+      <div class="alert alert--error modal-alert" id="login-alert" role="alert" hidden>
+        <img src="assets/icons/alert.svg" alt="" width="22" height="22">
+        <div>
+          <strong>No se pudo iniciar sesión</strong>
+          <p id="login-alert-text"></p>
+        </div>
+      </div>
+
+      <form id="login-form" novalidate>
+        <div class="field field--full">
+          <label for="login_correo">Correo institucional <span class="required" aria-hidden="true">*</span></label>
+          <input
+            type="email"
+            id="login_correo"
+            name="correo"
+            maxlength="190"
+            autocomplete="username"
+            inputmode="email"
+            required
+            aria-describedby="login_correo-error"
+          >
+          <p class="field__error" id="login_correo-error" role="alert"></p>
+        </div>
+
+        <div class="field field--full">
+          <label for="login_password">Contraseña <span class="required" aria-hidden="true">*</span></label>
+          <input
+            type="password"
+            id="login_password"
+            name="password"
+            maxlength="4096"
+            autocomplete="current-password"
+            required
+            aria-describedby="login_password-error"
+          >
+          <p class="field__error" id="login_password-error" role="alert"></p>
+        </div>
+
+        <div class="modal__actions">
+          <button type="button" class="btn btn--ghost" id="btn-cancel-login">Cancelar</button>
+          <button type="submit" class="btn btn--primary" id="btn-do-login">
+            <span class="btn__spinner" aria-hidden="true"></span>
+            <span class="btn__label">Iniciar sesión</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="js/registro.js" defer></script>
 </body>
