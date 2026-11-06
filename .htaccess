@@ -1,0 +1,18 @@
+# Protección de archivos sensibles.
+# Funciona en Apache con mod_rewrite/AllowOverride habilitado.
+<IfModule mod_authz_core.c>
+  <FilesMatch "^\.env(\..*)?$">
+    Require all denied
+  </FilesMatch>
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+  <FilesMatch "^\.env(\..*)?$">
+    Order allow,deny
+    Deny from all
+  </FilesMatch>
+</IfModule>
+
+# La carpeta storage no debe servirse directamente: los PDFs se entregan
+# únicamente mediante api/pdf.php con el token del registro.
+RedirectMatch 403 ^/registro-drones/storage(/|$)

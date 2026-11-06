@@ -1,0 +1,15 @@
+# Secretos y datos de ejecución
+.env
+!.env.example
+
+# Documentos generados y logs
+storage/pdf/*.pdf
+storage/logs/*
+storage/rate/*
+!storage/pdf/.gitkeep
+!storage/logs/.gitkeep
+!storage/rate/.gitkeep
+
+# Sistema
+.DS_Store
+Thumbs.db
