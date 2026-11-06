@@ -93,10 +93,10 @@ final class RegistroService
         try {
             $this->deliver($registro);
         } catch (Throwable $e) {
-            $this->markDeliveryFailure($id, $e);
+            $this->markDeliveryFailure($id, $e, true);
         }
 
-        return $this->toPublicArray($this->findById($id));
+        return $this->toPublicArray($this->findById($id), true);
     }
 
     /**
@@ -132,14 +132,21 @@ final class RegistroService
         $where = '';
         $params = [];
         if ($query !== '') {
+            // Con preparaciones nativas de PDO, cada aparición debe tener un nombre único.
             $where = ' WHERE (
-                LOCATE(LOWER(:q), LOWER(marca_dron)) > 0
-                OR LOCATE(LOWER(:q), LOWER(modelo)) > 0
-                OR LOCATE(LOWER(:q), LOWER(numero_serie)) > 0
-                OR LOCATE(LOWER(:q), LOWER(nombre_propietario)) > 0
-                OR LOCATE(LOWER(:q), LOWER(correo_contacto)) > 0
+                LOCATE(LOWER(:q_1), LOWER(marca_dron)) > 0
+                OR LOCATE(LOWER(:q_2), LOWER(modelo)) > 0
+                OR LOCATE(LOWER(:q_3), LOWER(numero_serie)) > 0
+                OR LOCATE(LOWER(:q_4), LOWER(nombre_propietario)) > 0
+                OR LOCATE(LOWER(:q_5), LOWER(correo_contacto)) > 0
             )';
-            $params['q'] = $query;
+            $params = [
+                'q_1' => $query,
+                'q_2' => $query,
+                'q_3' => $query,
+                'q_4' => $query,
+                'q_5' => $query,
+            ];
         }
 
         $countStmt = $this->pdo->prepare('SELECT COUNT(*) FROM ' . self::TABLE . $where);
@@ -201,9 +208,6 @@ final class RegistroService
     }
 
     /**
-     * Busca el registro público asociado a un token y, si el solicitante tiene
-     * permiso de descarga, incluye la información operativa necesaria.
-     *
      * @param array<string, mixed> $row
      * @return array<string, mixed>
      */
@@ -240,35 +244,50 @@ final class RegistroService
     }
 
     /**
-     * Reintenta el envío del comprobante. No vuelve a crear el registro.
+     * Reintenta el envío del comprobante. Una reserva atómica pone el registro
+     * en REGISTRADO antes de enviar y cuenta el intento, impidiendo reintentos
+     * simultáneos para el mismo registro.
      *
      * @return array<string, mixed>
      */
     public function retry(string $token): array
     {
         $registro = $this->findByToken($token);
+        $id = (int) $registro['id'];
 
         if (($registro['estado_registro'] ?? '') === 'CORREO_ENVIADO') {
-            return $this->toPublicArray($registro);
+            return $this->toPublicArray($registro, false);
         }
 
-        $attempts = (int) ($registro['intentos_envio'] ?? 0);
-        if ($attempts >= $this->maxRetries) {
+        if ((int) ($registro['intentos_envio'] ?? 0) >= $this->maxRetries) {
             throw new ApiException(
                 429,
-                'Se alcanzó el máximo de reintentos automáticos. Contacte a la DGAC para completar el envío.',
-                [],
-                // Los detalles adicionales se agregan en el endpoint.
+                'Se alcanzó el máximo de reintentos automáticos. Contacte a la DGAC para completar el envío.'
             );
         }
 
-        try {
-            $this->deliver($registro);
-        } catch (Throwable $e) {
-            $this->markDeliveryFailure((int) $registro['id'], $e);
+        if (!$this->reserveRetryAttempt($id)) {
+            $latest = $this->findById($id);
+            if (($latest['estado_registro'] ?? '') === 'CORREO_ENVIADO') {
+                return $this->toPublicArray($latest, false);
+            }
+            if ((int) ($latest['intentos_envio'] ?? 0) >= $this->maxRetries) {
+                throw new ApiException(
+                    429,
+                    'Se alcanzó el máximo de reintentos automáticos. Contacte a la DGAC para completar el envío.'
+                );
+            }
+            throw new ApiException(409, 'Ya hay un intento de envío en curso. Espere un momento y consulte nuevamente.');
         }
 
-        return $this->toPublicArray($this->findById((int) $registro['id']));
+        // El intento se contó al reservar; no se vuelve a incrementar al completarlo.
+        try {
+            $this->deliver($registro, false);
+        } catch (Throwable $e) {
+            $this->markDeliveryFailure($id, $e, false);
+        }
+
+        return $this->toPublicArray($this->findById($id), false);
     }
 
     /**
@@ -276,7 +295,8 @@ final class RegistroService
      */
     public function status(string $token): array
     {
-        return $this->toPublicArray($this->findByToken($token));
+        // El cliente ya conserva el token; no se devuelve junto con datos personales.
+        return $this->toPublicArray($this->findByToken($token), false);
     }
 
     /**
@@ -339,7 +359,7 @@ final class RegistroService
      *
      * @param array<string, mixed> $registro
      */
-    private function deliver(array $registro): void
+    private function deliver(array $registro, bool $countAttemptOnSuccess = true): void
     {
         $codigo = $this->codigo($registro);
         $registro['codigo'] = $codigo;
@@ -350,14 +370,16 @@ final class RegistroService
         $mailer = new Mailer();
         $mailer->sendRegistro($registro, $bytes, $filename);
 
-        $stmt = $this->pdo->prepare(
-            'UPDATE ' . self::TABLE . '
+        $sql = 'UPDATE ' . self::TABLE . '
              SET estado_registro = :estado,
                  correo_enviado_en = :enviado,
-                 intentos_envio = intentos_envio + 1,
-                 ultimo_error = NULL
-             WHERE id = :id'
-        );
+                 ultimo_error = NULL';
+        if ($countAttemptOnSuccess) {
+            $sql .= ', intentos_envio = intentos_envio + 1';
+        }
+        $sql .= ' WHERE id = :id';
+
+        $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
             'estado' => 'CORREO_ENVIADO',
             'enviado' => date('Y-m-d H:i:s'),
@@ -408,17 +430,52 @@ final class RegistroService
         }
     }
 
-    private function markDeliveryFailure(int $id, Throwable $error): void
+    /**
+     * Reclama un reintento en una sola operación condicional. Sólo una petición
+     * puede cambiar CORREO_FALLIDO a REGISTRADO e incrementar el contador.
+     * REGISTRADO antiguo se puede reclamar tras 10 minutos para recuperar una
+     * petición que haya terminado abruptamente.
+     */
+    private function reserveRetryAttempt(int $id): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE ' . self::TABLE . '
+             SET estado_registro = :registrado,
+                 intentos_envio = intentos_envio + 1,
+                 ultimo_error = NULL
+             WHERE id = :id
+               AND intentos_envio < :max
+               AND (
+                   estado_registro = :fallido
+                   OR (estado_registro = :registrado_stale
+                       AND actualizado_en < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE))
+               )'
+        );
+
+        $stmt->execute([
+            'registrado' => 'REGISTRADO',
+            'id' => $id,
+            'max' => $this->maxRetries,
+            'fallido' => 'CORREO_FALLIDO',
+            'registrado_stale' => 'REGISTRADO',
+        ]);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    private function markDeliveryFailure(int $id, Throwable $error, bool $countAttempt = true): void
     {
         $message = mb_substr($error->getMessage(), 0, 500);
 
-        $stmt = $this->pdo->prepare(
-            'UPDATE ' . self::TABLE . '
+        $sql = 'UPDATE ' . self::TABLE . '
              SET estado_registro = :estado,
-                 intentos_envio = intentos_envio + 1,
-                 ultimo_error = :error
-             WHERE id = :id'
-        );
+                 ultimo_error = :error';
+        if ($countAttempt) {
+            $sql .= ', intentos_envio = intentos_envio + 1';
+        }
+        $sql .= ' WHERE id = :id';
+
+        $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
             'estado' => 'CORREO_FALLIDO',
             'error' => $message,
@@ -450,7 +507,7 @@ final class RegistroService
      * @param array<string, mixed> $row
      * @return array<string, mixed>
      */
-    private function toPublicArray(array $row): array
+    private function toPublicArray(array $row, bool $includeToken = false): array
     {
         $estado = (string) $row['estado_registro'];
         $intentos = (int) $row['intentos_envio'];
@@ -471,8 +528,11 @@ final class RegistroService
             'intentos_envio' => $intentos,
             'reintento_disponible' => $estado !== 'CORREO_ENVIADO' && $intentos < $this->maxRetries,
             'puede_descargar' => $mayDescargar,
-            'token_comprobante' => $token,
         ];
+
+        if ($includeToken) {
+            $public['token_comprobante'] = $token;
+        }
 
         if ($mayDescargar) {
             $public['pdf_url'] = 'api/pdf.php?id=' . rawurlencode((string) $row['id']);
